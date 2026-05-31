@@ -1107,14 +1107,7 @@
                 // Ocultar temporalmente el formulario de pago para que no salga en la foto
                 formRegisterPayment.style.display = 'none';
 
-                // Expandir el área de captura temporalmente para que html2canvas no corte la tabla "mochada"
-                const originalWidth = statementCaptureArea.style.width;
-                const originalMaxWidth = statementCaptureArea.style.maxWidth;
-                
-                statementCaptureArea.style.width = statementCaptureArea.scrollWidth + 'px';
-                statementCaptureArea.style.maxWidth = 'none';
-
-                // Remover TODAS las restricciones de tabla para la foto
+                // Remover TODAS las restricciones de tabla SIN ensanchar toda la pantalla
                 const tableContainer = statementCaptureArea.querySelector('.overflow-x-auto');
                 const table = tableContainer ? tableContainer.querySelector('table') : null;
                 const originalContainerClasses = tableContainer ? tableContainer.className : '';
@@ -1122,18 +1115,15 @@
                 
                 if (tableContainer && table) {
                     tableContainer.className = 'rounded-lg bg-gray-800 shadow-lg'; // Quita el overflow-x-auto
-                    table.className = 'w-full min-w-max text-left'; // Forzamos min-w-max para que el texto no se apriete
+                    table.className = 'w-full text-left text-xs'; // Quita min-w-max y achica la letra temporalmente para que quepa todo en celular
                 }
 
                 html2canvas(statementCaptureArea, {
                     backgroundColor: '#111827', // Fondo oscuro
-                    scale: 2, // Mejorar resolución
-                    windowWidth: statementCaptureArea.scrollWidth // Fundamental para que la imagen salga completa
+                    scale: 2 // Mejorar resolución
                 }).then(canvas => {
                     // Volver a mostrar el formulario de pago y restaurar todo a la normalidad
                     formRegisterPayment.style.display = 'block';
-                    statementCaptureArea.style.width = originalWidth;
-                    statementCaptureArea.style.maxWidth = originalMaxWidth;
                     if (tableContainer && table) {
                         tableContainer.className = originalContainerClasses;
                         table.className = originalTableClasses;
@@ -1167,8 +1157,9 @@
                 }).catch(err => {
                     // Asegurarse de mostrar el formulario de nuevo y restaurar overflow si hay error
                     formRegisterPayment.style.display = 'block';
-                    if (tableContainer) {
-                        tableContainer.className = originalClasses;
+                    if (tableContainer && table) {
+                        tableContainer.className = originalContainerClasses;
+                        table.className = originalTableClasses;
                     }
                     console.error('Error con html2canvas:', err);
                     hideLoading();
@@ -1195,15 +1186,19 @@
                     totalPrincipalOutstanding += client.balance > 0 ? client.balance : 0;
                     
                     client.payments.forEach(payment => {
-                        totalInterestEarned += payment.interestPaid;
+                        // Forzamos conversión a número para evitar errores si payment.interestPaid quedó como ""
+                        const intPaid = Number(payment.interestPaid) || 0;
+                        const prinPaid = Number(payment.principalPaid) || 0;
+
+                        totalInterestEarned += intPaid;
                         
                         const quincenaKey = getQuincenaKey(payment.date);
                         if (!quincenaKey) return; // Continuar si la fecha es inválida
                         if (!quincenaReport[quincenaKey]) {
                             quincenaReport[quincenaKey] = { interest: 0, principal: 0 };
                         }
-                        quincenaReport[quincenaKey].interest += payment.interestPaid;
-                        quincenaReport[quincenaKey].principal += payment.principalPaid;
+                        quincenaReport[quincenaKey].interest += intPaid;
+                        quincenaReport[quincenaKey].principal += prinPaid;
                     });
                 });
 
