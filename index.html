@@ -631,9 +631,10 @@
                 statementHeader.innerHTML = `
                     <div class="flex justify-between items-start mb-2">
                         <h2 class="text-2xl font-bold text-blue-400">${client.name}</h2>
-                        <div class="flex gap-2">
-                            <button id="btn-edit-client" class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-1 px-2 rounded border border-gray-600 transition duration-300">Editar</button>
-                            <button id="btn-extend-loan" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Ampliar Préstamo</button>
+                        <div class="flex gap-1 flex-wrap justify-end">
+                            <button id="btn-adjust-client" class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-1 px-2 rounded border border-gray-600 transition duration-300">Ajustar Datos</button>
+                            <button id="btn-extend-loan" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Ampliar</button>
+                            <button id="btn-delete-client" class="text-xs bg-red-800 hover:bg-red-700 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Eliminar</button>
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-2 text-sm">
@@ -645,13 +646,13 @@
                     <p class="mt-4 text-3xl font-bold"><span class="text-gray-400">Saldo Actual:</span> <span class="text-red-400">B/.${client.balance.toFixed(2)}</span></p>
                 `;
 
-                // 1. Lógica para EDITAR (Corregir errores de dedo. NO deja historial)
-                document.getElementById('btn-edit-client').addEventListener('click', () => {
+                // 1. LÓGICA PARA AJUSTAR DATOS (Corrige errores de dedo de nombre, fecha o monto. NO deja historial)
+                document.getElementById('btn-adjust-client').addEventListener('click', () => {
                     setTimeout(() => {
                         const newName = prompt("Corregir Nombre del Cliente:", client.name);
                         if (newName === null) return;
                         
-                        const newPrincipalStr = prompt("Corregir Capital Inicial (B/.):\n(Cambia el monto base directamente sin dejar historial)", client.principal);
+                        const newPrincipalStr = prompt("Corregir Capital Base (B/.):\n(Cambia el monto directamente sin dejar rastro en el historial)", client.principal);
                         if (newPrincipalStr === null) return;
                         
                         const newDate = prompt("Corregir Fecha del Préstamo (YYYY-MM-DD):", client.loanDate);
@@ -679,7 +680,7 @@
                     }, 100);
                 });
 
-                // 2. Lógica para AMPLIAR PRÉSTAMO (Suma al capital actual y SÍ deja historial)
+                // 2. LÓGICA PARA AMPLIAR PRÉSTAMO (Suma al capital actual y SÍ deja historial)
                 document.getElementById('btn-extend-loan').addEventListener('click', () => {
                     setTimeout(() => {
                         const addedPrincipalStr = prompt("Ampliación: ¿Cuánto dinero EXTRA vas a prestarle? (B/.):", "0");
@@ -720,6 +721,16 @@
                             showClientStatement(currentClientId); 
                         }
                     }, 100);
+                });
+
+                // 3. LÓGICA PARA ELIMINAR CLIENTE (Borra todo el historial de este cliente específico)
+                document.getElementById('btn-delete-client').addEventListener('click', () => {
+                    showCustomConfirm("¿Estás seguro de ELIMINAR a este cliente por completo? Se perderá todo su historial.", () => {
+                        removeClient(currentClientId);
+                        renderClientList();
+                        navigateTo('page-list');
+                        showCustomAlert("Cliente eliminado correctamente.");
+                    }, "Eliminar Cliente");
                 });
 
                 statementTableBody.innerHTML = '';
