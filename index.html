@@ -230,31 +230,41 @@
         <!-- ===== VISTA 4: REPORTE GENERAL (ADMIN) ===== -->
         <div id="page-admin-report" class="page space-y-6">
             <button class="btn-back text-blue-400 hover:text-blue-300">&larr; Volver a la Lista</button>
-            <h1 class="text-3xl font-bold text-blue-400 mb-4">Reporte General</h1>
+            <h1 class="text-3xl font-bold text-blue-400 mb-4">Reporte General Detallado</h1>
             
-            <!-- Resumen de Totales -->
+            <!-- Filtros -->
             <div class="bg-gray-800 p-4 rounded-lg shadow-lg space-y-3">
-                <h3 class="text-xl font-semibold text-white mb-2">Resumen Total</h3>
-                <div class="flex justify-between">
-                    <span class="text-gray-400">Capital Prestado (Activo):</span>
-                    <span class="font-bold text-red-400" id="report-total-outstanding">B/. 0.00</span>
-                </div>
-                <div class="flex justify-between">
-                    <span class="text-gray-400">Total Interés Ganado:</span>
-                    <span class="font-bold text-green-400" id="report-total-interest">B/. 0.00</span>
+                <h3 class="text-lg font-semibold text-white">Filtros</h3>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="text" id="filter-client-name" placeholder="Buscar por cliente..." class="flex-grow bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="month" id="filter-date" class="bg-gray-700 border border-gray-600 text-white rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button id="btn-apply-filters" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">Filtrar</button>
                 </div>
             </div>
 
-            <!-- Historial de Ganancias por Período -->
+            <!-- Resumen de Totales Globales -->
+            <div class="bg-gray-800 p-4 rounded-lg shadow-lg space-y-3">
+                <h3 class="text-xl font-semibold text-white mb-2">Resumen de Búsqueda</h3>
+                <div class="grid grid-cols-2 gap-3 text-sm">
+                    <p><span class="text-gray-400">Total Capital Prestado:</span> <br><span class="font-bold text-white" id="report-total-loaned">B/. 0.00</span></p>
+                    <p><span class="text-gray-400">Saldo Capital (Deuda):</span> <br><span class="font-bold text-red-400" id="report-total-outstanding">B/. 0.00</span></p>
+                    <p><span class="text-gray-400">Interés Pendiente:</span> <br><span class="font-bold text-yellow-400" id="report-total-pending-interest">B/. 0.00</span></p>
+                    <p><span class="text-gray-400">Total Interés Ganado:</span> <br><span class="font-bold text-green-400" id="report-total-interest">B/. 0.00</span></p>
+                </div>
+            </div>
+
+            <!-- Detalle por Cliente -->
             <div>
-                <h3 class="text-xl font-semibold mb-2">Historial de Ganancias (por Quincena/Mes)</h3>
-                <div class="overflow-x-auto rounded-lg bg-gray-800 shadow-lg max-h-96 overflow-y-auto no-scrollbar">
-                    <table class="w-full min-w-max text-left">
+                <h3 class="text-xl font-semibold mb-2">Desglose por Cliente</h3>
+                <div class="overflow-x-auto rounded-lg bg-gray-800 shadow-lg max-h-[500px] overflow-y-auto">
+                    <table class="w-full text-left text-xs sm:text-sm">
                         <thead class="bg-gray-700 sticky top-0">
                             <tr>
-                                <th class="p-3 text-sm font-semibold">Período</th>
-                                <th class="p-3 text-sm font-semibold">Capital Recuperado</th>
-                                <th class="p-3 text-sm font-semibold">Interés Ganado</th>
+                                <th class="p-2 font-semibold whitespace-nowrap">Cliente</th>
+                                <th class="p-2 font-semibold">Prestado</th>
+                                <th class="p-2 font-semibold">Saldo Cap.</th>
+                                <th class="p-2 font-semibold">Int. Pend.</th>
+                                <th class="p-2 font-semibold">Int. Ganado</th>
                             </tr>
                         </thead>
                         <tbody id="report-table-body" class="divide-y divide-gray-700">
@@ -1107,26 +1117,41 @@
                 // Ocultar temporalmente el formulario de pago para que no salga en la foto
                 formRegisterPayment.style.display = 'none';
 
-                // Remover TODAS las restricciones de tabla SIN ensanchar toda la pantalla
+                // TRUCO PARA QUE NO SALGA MOCHA NI COMO ARCHIVO:
+                // Reducimos temporalmente el relleno (padding) y el tamaño de letra de la tabla
+                // para que quepa de forma natural en la pantalla vertical del celular.
                 const tableContainer = statementCaptureArea.querySelector('.overflow-x-auto');
                 const table = tableContainer ? tableContainer.querySelector('table') : null;
                 const originalContainerClasses = tableContainer ? tableContainer.className : '';
                 const originalTableClasses = table ? table.className : '';
                 
                 if (tableContainer && table) {
-                    tableContainer.className = 'rounded-lg bg-gray-800 shadow-lg'; // Quita el overflow-x-auto
-                    table.className = 'w-full text-left text-xs'; // Quita min-w-max y achica la letra temporalmente para que quepa todo en celular
+                    tableContainer.className = 'rounded-lg bg-gray-800 shadow-lg'; 
+                    table.className = 'w-full text-left text-[11px] leading-tight'; // Letra pequeña para encajar
+                    
+                    // Quitar los padding 'p-3' y cambiarlos a 'p-1' en las celdas
+                    const cells = table.querySelectorAll('th, td');
+                    cells.forEach(cell => {
+                        cell.dataset.oldClass = cell.className;
+                        cell.className = cell.className.replace('p-3', 'p-1').replace('text-sm', '');
+                    });
                 }
 
                 html2canvas(statementCaptureArea, {
                     backgroundColor: '#111827', // Fondo oscuro
-                    scale: 2 // Mejorar resolución
+                    scale: 2 // Buena resolución sin hacer el archivo muy pesado
                 }).then(canvas => {
-                    // Volver a mostrar el formulario de pago y restaurar todo a la normalidad
+                    // Volver a mostrar el formulario de pago y restaurar la tabla
                     formRegisterPayment.style.display = 'block';
                     if (tableContainer && table) {
                         tableContainer.className = originalContainerClasses;
                         table.className = originalTableClasses;
+                        const cells = table.querySelectorAll('th, td');
+                        cells.forEach(cell => {
+                            if(cell.dataset.oldClass) {
+                                cell.className = cell.dataset.oldClass;
+                            }
+                        });
                     }
 
                     canvas.toBlob(function(blob) {
