@@ -759,6 +759,25 @@
                     addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.pendingInterest, p.newBalance);
                 });
 
+                // --- NUEVO: Mostrar leyenda detallada debajo del historial ---
+                let legendContainer = document.getElementById('payment-legend-container');
+                if (!legendContainer) {
+                    legendContainer = document.createElement('div');
+                    legendContainer.id = 'payment-legend-container';
+                    legendContainer.className = 'mt-4 p-4 bg-gray-800 rounded-lg shadow-lg text-sm border-l-4 border-blue-400';
+                    document.getElementById('statement-table-body').closest('.overflow-x-auto').parentNode.appendChild(legendContainer);
+                }
+                
+                if (client.lastPaymentLegend) {
+                    legendContainer.style.display = 'block';
+                    legendContainer.innerHTML = `
+                        <h4 class="font-bold text-blue-300 mb-2">Desglose del último pago registrado:</h4>
+                        <div class="text-gray-300 leading-relaxed text-base">${client.lastPaymentLegend}</div>
+                    `;
+                } else {
+                    legendContainer.style.display = 'none';
+                }
+
                 renderPendingPayments(client);
                 paymentAmountInput.value = '';
                 
@@ -791,29 +810,35 @@
                 const pending = calculatePendingInterest(client, new Date());
                 pendingPaymentsList.innerHTML = '';
 
-                const previousAccumulated = client.accumulatedInterest || 0;
-                const grandTotalInterest = pending.totalInterest + previousAccumulated;
+                let unpaidPeriods = client.unpaidPeriods || [];
+                // Retrocompatibilidad por si había un saldo de la versión anterior
+                if (client.accumulatedInterest > 0) {
+                    unpaidPeriods.unshift({ dateStr: 'Atraso anterior', amount: client.accumulatedInterest });
+                }
 
-                if (pending.payments.length === 0 && previousAccumulated === 0 && client.balance > 0) {
+                let newPendingAmount = pending.totalInterest;
+                let grandTotalInterest = newPendingAmount + unpaidPeriods.reduce((sum, d) => sum + d.amount, 0);
+
+                if (pending.payments.length === 0 && unpaidPeriods.length === 0 && client.balance > 0) {
                      pendingPaymentsList.innerHTML = '<p class="text-gray-400">No hay intereses vencidos.</p>';
                 } else if (client.balance <= 0) {
                     pendingPaymentsList.innerHTML = '<p class="text-green-400 font-semibold">¡Préstamo Pagado!</p>';
                 } else {
-                    // Mostrar intereses atrasados que no se pagaron en cuotas anteriores
-                    if (previousAccumulated > 0) {
+                    // Mostrar cuotas viejas no pagadas MANTENIENDO SU FECHA (se arrastran)
+                    unpaidPeriods.forEach(debt => {
                         const elAcc = document.createElement('div');
-                        elAcc.className = 'flex justify-between items-center bg-gray-700 p-2 rounded border-l-4 border-red-500';
+                        elAcc.className = 'flex justify-between items-center bg-gray-700 p-2 rounded border-l-4 border-red-500 mb-1';
                         elAcc.innerHTML = `
-                            <span class="text-red-400 font-semibold">Atraso Acumulado (Cuotas pasadas):</span>
-                            <span class="font-bold text-red-400">B/.${previousAccumulated.toFixed(2)}</span>
+                            <span class="text-red-400 font-semibold">Vencida (${debt.dateStr}):</span>
+                            <span class="font-bold text-red-400">B/.${debt.amount.toFixed(2)}</span>
                         `;
                         pendingPaymentsList.appendChild(elAcc);
-                    }
+                    });
 
                     // Mostrar los vencimientos nuevos
                     pending.payments.forEach(p => {
                         const el = document.createElement('div');
-                        el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded';
+                        el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded mb-1';
                         
                         const formattedDate = p.date.toLocaleDateString('es-PA', { 
                             year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
@@ -1073,62 +1098,71 @@
                 }
 
                 const pending = calculatePendingInterest(client, paymentDateObj);
-                const previousAccumulated = client.accumulatedInterest || 0;
                 
-                let details = [];
-                let remainingToPay = amountPaid;
-                let calculatedInterestPaid = 0;
-
-                // 1. Pagar saldo atrasado viejo primero
-                if (previousAccumulated > 0) {
-                    if (remainingToPay >= previousAccumulated) {
-                        details.push(`Atraso anterior pagado (B/.${previousAccumulated.toFixed(2)})`);
-                        calculatedInterestPaid += previousAccumulated;
-                        remainingToPay -= previousAccumulated;
-                    } else if (remainingToPay > 0) {
-                        details.push(`Atraso anterior: abonó B/.${remainingToPay.toFixed(2)}, pendiente B/.${(previousAccumulated - remainingToPay).toFixed(2)}`);
-                        calculatedInterestPaid += remainingToPay;
-                        remainingToPay = 0;
-                    } else {
-                        details.push(`Atraso anterior pendiente (B/.${previousAccumulated.toFixed(2)})`);
-                    }
+                // 1. Unir las deudas viejas con las nuevas manteniendo sus fechas
+                let debtsQueue = client.unpaidPeriods ? [...client.unpaidPeriods] : [];
+                
+                // Por retrocompatibilidad si había saldo acumulado del archivo anterior
+                if (client.accumulatedInterest > 0) {
+                    debtsQueue.unshift({ dateStr: 'Atraso Ant.', amount: client.accumulatedInterest });
+                    client.accumulatedInterest = 0;
                 }
-
-                // 2. Pagar quincenas actuales
+                
                 if (pending.payments && pending.payments.length > 0) {
                     pending.payments.forEach(p => {
-                        let qDate = `${p.date.getDate().toString().padStart(2, '0')}/${(p.date.getMonth() + 1).toString().padStart(2, '0')}`;
-                        if (remainingToPay >= p.interest) {
-                            details.push(`Int. ${qDate} pagado`);
-                            calculatedInterestPaid += p.interest;
-                            remainingToPay -= p.interest;
-                        } else if (remainingToPay > 0) {
-                            details.push(`Int. ${qDate}: abonó B/.${remainingToPay.toFixed(2)}, pend. B/.${(p.interest - remainingToPay).toFixed(2)}`);
-                            calculatedInterestPaid += remainingToPay;
-                            remainingToPay = 0;
-                        } else {
-                            details.push(`Int. ${qDate} pendiente (B/.${p.interest.toFixed(2)})`);
-                        }
+                        const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
+                        debtsQueue.push({ dateStr: qDate, amount: p.interest });
                     });
                 }
 
-                let interestPaid = calculatedInterestPaid;
-                let principalPaid = remainingToPay;
-
+                const totalInterestDue = debtsQueue.reduce((sum, d) => sum + d.amount, 0);
+                
+                let interestPaid = Math.min(amountPaid, totalInterestDue);
+                let principalPaid = amountPaid - interestPaid;
+                
                 if (principalPaid > client.balance) {
                     principalPaid = client.balance;
+                    interestPaid = Math.min(interestPaid, amountPaid - principalPaid);
+                }
+                
+                if ( (interestPaid + principalPaid) > amountPaid ) {
+                    interestPaid = amountPaid - principalPaid;
                 }
 
                 const newBalance = client.balance - principalPaid;
 
-                const totalInterestDue = pending.totalInterest + previousAccumulated;
-                const unpaidInterest = totalInterestDue - interestPaid;
-                client.accumulatedInterest = unpaidInterest > 0.01 ? unpaidInterest : 0;
+                // 2. Distribuir el pago, generar la leyenda y GUARDAR las fechas vivas que no se pagaron
+                let remainingToPay = interestPaid;
+                let legendLines = [];
+                let newUnpaidPeriods = [];
 
-                let paymentDescription = details.length > 0 ? details.join(' | ') : 'Abono a Capital';
+                debtsQueue.forEach(debt => {
+                    if (remainingToPay >= debt.amount) {
+                        legendLines.push(`✅ Int. ${debt.dateStr}: Pagado (B/.${debt.amount.toFixed(2)})`);
+                        remainingToPay -= debt.amount;
+                    } else if (remainingToPay > 0) {
+                        const pendiente = debt.amount - remainingToPay;
+                        legendLines.push(`⚠️ Int. ${debt.dateStr}: Abonó B/.${remainingToPay.toFixed(2)}, Pendiente B/.${pendiente.toFixed(2)}`);
+                        newUnpaidPeriods.push({ dateStr: debt.dateStr, amount: pendiente }); // Se guarda la fecha
+                        remainingToPay = 0;
+                    } else {
+                        legendLines.push(`❌ Int. ${debt.dateStr}: Pendiente (B/.${debt.amount.toFixed(2)})`);
+                        newUnpaidPeriods.push({ dateStr: debt.dateStr, amount: debt.amount }); // Se guarda la fecha
+                    }
+                });
+
                 if (principalPaid > 0) {
-                    paymentDescription += ` | Abono a Cap: B/.${principalPaid.toFixed(2)}`;
+                    legendLines.push(`💰 Abono a Capital: B/.${principalPaid.toFixed(2)}`);
                 }
+
+                client.unpaidPeriods = newUnpaidPeriods;
+                // Guardamos la leyenda completa para mostrarla abajo
+                client.lastPaymentLegend = legendLines.length > 0 ? legendLines.join('<br>') : 'Abono a Capital';
+
+                let paymentDescription = newUnpaidPeriods.length > 0 ? "Abono Parcial" : "Pago Completo";
+                if (amountPaid === principalPaid) paymentDescription = "Abono a Capital";
+
+                const unpaidInterestTotal = newUnpaidPeriods.reduce((sum, d) => sum + d.amount, 0);
 
                 const newPayment = {
                     date: paymentDateStr,
@@ -1136,7 +1170,7 @@
                     amount: amountPaid,
                     interestPaid: interestPaid,
                     principalPaid: principalPaid,
-                    pendingInterest: client.accumulatedInterest, // NUEVA COLUMNA CONGELADA
+                    pendingInterest: unpaidInterestTotal, // CONGELA EL SALDO EN LA COLUMNA
                     newBalance: newBalance
                 };
 
@@ -1223,6 +1257,14 @@
                                 ${document.getElementById('statement-table-body').innerHTML}
                             </tbody>
                         </table>
+                        
+                        ${client.lastPaymentLegend ? 
+                            `<div class="mt-6 p-4 bg-gray-700 border-l-4 border-blue-400 rounded">
+                                <h4 class="font-bold text-blue-300 mb-2">Desglose del último pago registrado:</h4>
+                                <div class="text-gray-200 text-lg leading-relaxed">${client.lastPaymentLegend}</div>
+                             </div>` 
+                            : ''
+                        }
                     </div>
                 `;
 
