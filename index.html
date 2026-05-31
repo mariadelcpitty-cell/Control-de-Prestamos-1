@@ -631,34 +631,66 @@
                 statementHeader.innerHTML = `
                     <div class="flex justify-between items-start mb-2">
                         <h2 class="text-2xl font-bold text-blue-400">${client.name}</h2>
-                        <button id="btn-edit-client" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Ampliación / Ajuste</button>
+                        <div class="flex gap-2">
+                            <button id="btn-edit-client" class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-1 px-2 rounded border border-gray-600 transition duration-300">Editar</button>
+                            <button id="btn-extend-loan" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Ampliar Préstamo</button>
+                        </div>
                     </div>
                     <div class="grid grid-cols-2 gap-2 text-sm">
                         <p><span class="text-gray-400">Capital Reflejado:</span> <span class="font-medium">B/.${client.principal.toFixed(2)}</span></p>
                         <p><span class="text-gray-400">Tasa Interés:</span> <span class="font-medium">${client.interestRate}% ${interestLabel}</span></p>
-                        <p><span class="text-gray-400">Fecha de Corte/Ajuste:</span> <span class="font-medium">${formatDate(client.loanDate)}</span></p>
+                        <p><span class="text-gray-400">Fecha de Corte:</span> <span class="font-medium">${formatDate(client.loanDate)}</span></p>
                         <p><span class="text-gray-400">Periodicidad:</span> <span class="font-medium capitalize">${client.period}</span></p>
                     </div>
                     <p class="mt-4 text-3xl font-bold"><span class="text-gray-400">Saldo Actual:</span> <span class="text-red-400">B/.${client.balance.toFixed(2)}</span></p>
                 `;
 
-                // Añadir lógica de ajuste/ampliación al botón
+                // 1. Lógica para EDITAR (Corregir errores de dedo. NO deja historial)
                 document.getElementById('btn-edit-client').addEventListener('click', () => {
                     setTimeout(() => {
-                        const newName = prompt("Nombre del Cliente:", client.name);
+                        const newName = prompt("Corregir Nombre del Cliente:", client.name);
                         if (newName === null) return;
                         
-                        // Pedir SOLO EL MONTO NUEVO que se está prestando extra (100)
-                        const addedPrincipalStr = prompt("Monto NUEVO prestado (B/.):\nEj: Si hoy prestas 100 más, escribe 100.\nSi necesitas restar deuda por un error, usa signo negativo (ej: -20).", "0");
+                        const newPrincipalStr = prompt("Corregir Capital Inicial (B/.):\n(Cambia el monto base directamente sin dejar historial)", client.principal);
+                        if (newPrincipalStr === null) return;
+                        
+                        const newDate = prompt("Corregir Fecha del Préstamo (YYYY-MM-DD):", client.loanDate);
+                        if (newDate === null) return;
+
+                        const newPrincipal = parseFloat(newPrincipalStr);
+                        if (newName.trim() === "" || isNaN(newPrincipal) || newPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
+                            showCustomAlert("Datos inválidos. Asegúrese de usar el formato correcto.");
+                            return;
+                        }
+
+                        const difference = newPrincipal - client.principal;
+                        const fullDb = getFullDB();
+                        const clientIndex = fullDb.clients.findIndex(c => c.id === currentClientId);
+                        if (clientIndex !== -1) {
+                            fullDb.clients[clientIndex].name = newName.trim();
+                            fullDb.clients[clientIndex].principal = newPrincipal;
+                            fullDb.clients[clientIndex].loanDate = newDate.trim();
+                            fullDb.clients[clientIndex].balance += difference;
+                            
+                            saveFullDB(fullDb);
+                            loadActiveClientsDB();
+                            showClientStatement(currentClientId);
+                        }
+                    }, 100);
+                });
+
+                // 2. Lógica para AMPLIAR PRÉSTAMO (Suma al capital actual y SÍ deja historial)
+                document.getElementById('btn-extend-loan').addEventListener('click', () => {
+                    setTimeout(() => {
+                        const addedPrincipalStr = prompt("Ampliación: ¿Cuánto dinero EXTRA vas a prestarle? (B/.):", "0");
                         if (addedPrincipalStr === null) return;
 
-                        // Pedir la nueva fecha (muy importante para reiniciar el reloj de cobro de intereses)
-                        const newDate = prompt("Fecha de la Ampliación (YYYY-MM-DD):\nLos nuevos intereses se cobrarán a partir de esta fecha.", new Date().toISOString().split('T')[0]);
+                        const newDate = prompt("Fecha de la Ampliación (YYYY-MM-DD):\nLos nuevos intereses se calcularán desde aquí.", new Date().toISOString().split('T')[0]);
                         if (newDate === null) return;
 
                         const addedPrincipal = parseFloat(addedPrincipalStr);
-                        if (newName.trim() === "" || isNaN(addedPrincipal) || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
-                            showCustomAlert("Datos inválidos. Revise el monto y el formato de fecha (YYYY-MM-DD).");
+                        if (isNaN(addedPrincipal) || addedPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
+                            showCustomAlert("Datos inválidos. Escriba un monto mayor a 0 y revise la fecha.");
                             return;
                         }
 
@@ -669,25 +701,19 @@
                             const newBalance = client.balance + addedPrincipal;
                             const newPrincipal = client.principal + addedPrincipal;
                             
-                            // 1. Actualizar los datos maestros
-                            fullDb.clients[clientIndex].name = newName.trim();
                             fullDb.clients[clientIndex].principal = newPrincipal;
-                            fullDb.clients[clientIndex].loanDate = newDate.trim(); // Se actualiza para futuros cobros
+                            fullDb.clients[clientIndex].loanDate = newDate.trim();
                             fullDb.clients[clientIndex].balance = newBalance;
 
-                            // 2. Registrar la acción en el historial visible
-                            if (addedPrincipal !== 0) {
-                                const actionName = addedPrincipal > 0 ? "Ampliación Préstamo" : "Ajuste de Saldo";
-                                const adjustmentPayment = {
-                                    date: newDate.trim(),
-                                    desc: actionName, // <-- Propiedad clave para el historial
-                                    amount: "",
-                                    interestPaid: "",
-                                    principalPaid: -addedPrincipal, // Se pone en negativo porque representa un aumento de deuda
-                                    newBalance: newBalance
-                                };
-                                fullDb.clients[clientIndex].payments.push(adjustmentPayment);
-                            }
+                            const adjustmentPayment = {
+                                date: newDate.trim(),
+                                desc: "Ampliación Préstamo",
+                                amount: "",
+                                interestPaid: "",
+                                principalPaid: -addedPrincipal, // Negativo porque es dinero que suma a la deuda
+                                newBalance: newBalance
+                            };
+                            fullDb.clients[clientIndex].payments.push(adjustmentPayment);
                             
                             saveFullDB(fullDb);
                             loadActiveClientsDB();
@@ -700,7 +726,6 @@
                 addTransactionRow(client.loanDate, 'Préstamo Inicial', '', '', '', client.principal);
                 
                 client.payments.forEach(p => {
-                    // Si el pago tiene una descripción guardada la muestra, si no usa "Pago Registrado"
                     const description = p.desc ? p.desc : 'Pago Registrado';
                     addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.newBalance);
                 });
