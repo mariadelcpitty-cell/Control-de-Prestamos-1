@@ -193,7 +193,7 @@
                 <div class="mt-6">
                     <h3 class="text-xl font-semibold mb-2">Historial de Transacciones</h3>
                     <div class="overflow-x-auto rounded-lg bg-gray-800 shadow-lg">
-                        <table class="w-full min-w-max text-left">
+                        <table class="w-full text-left">
                             <thead class="bg-gray-700">
                                 <tr>
                                     <th class="p-3 text-sm font-semibold">Fecha</th>
@@ -755,11 +755,15 @@
                 addTransactionRow(client.loanDate, 'Préstamo Inicial', '', '', '', '', client.principal);
                 
                 client.payments.forEach(p => {
-                    const description = p.desc ? p.desc : 'Pago Registrado';
+                    let description = p.desc ? p.desc : 'Pago Registrado';
+                    // Limpia las leyendas viejas para que no deformen la tabla
+                    if (description.includes('|')) {
+                        description = "Abono Parcial (Ver Desglose)";
+                    }
                     addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.pendingInterest, p.newBalance);
                 });
 
-                // --- NUEVO: Mostrar leyenda detallada debajo del historial ---
+                // --- Mostrar leyendas detalladas debajo del historial ---
                 let legendContainer = document.getElementById('payment-legend-container');
                 if (!legendContainer) {
                     legendContainer = document.createElement('div');
@@ -768,11 +772,24 @@
                     document.getElementById('statement-table-body').closest('.overflow-x-auto').parentNode.appendChild(legendContainer);
                 }
                 
-                if (client.lastPaymentLegend) {
+                let allLegends = [];
+                client.payments.forEach(p => {
+                    if (p.legend) {
+                        allLegends.push(`<div class="text-gray-300 leading-relaxed text-base">${p.legend}</div>`);
+                    } else if (p.desc && p.desc.includes('|')) {
+                        let oldDesc = p.desc.split('|').map(s => s.trim()).join('<br>');
+                        const formattedDate = formatDate(p.date);
+                        allLegends.push(`<div class="text-gray-300 leading-relaxed text-base"><strong>Detalle del Pago (${formattedDate}):</strong><br>${oldDesc}</div>`);
+                    }
+                });
+
+                if (allLegends.length > 0) {
                     legendContainer.style.display = 'block';
                     legendContainer.innerHTML = `
-                        <h4 class="font-bold text-blue-300 mb-2">Desglose del último pago registrado:</h4>
-                        <div class="text-gray-300 leading-relaxed text-base">${client.lastPaymentLegend}</div>
+                        <h4 class="font-bold text-blue-300 mb-3">Historial de Desgloses:</h4>
+                        <div class="space-y-4">
+                            ${allLegends.join('<hr class="border-gray-600">')}
+                        </div>
                     `;
                 } else {
                     legendContainer.style.display = 'none';
@@ -835,20 +852,23 @@
                         pendingPaymentsList.appendChild(elAcc);
                     });
 
-                    // Mostrar los vencimientos nuevos
+                    // Mostrar los vencimientos nuevos (evitando duplicar si ya están en atrasos)
                     pending.payments.forEach(p => {
-                        const el = document.createElement('div');
-                        el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded mb-1';
-                        
-                        const formattedDate = p.date.toLocaleDateString('es-PA', { 
-                            year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
-                        });
+                        const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
+                        if (!unpaidPeriods.some(d => d.dateStr === qDate)) {
+                            const el = document.createElement('div');
+                            el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded mb-1';
+                            
+                            const formattedDate = p.date.toLocaleDateString('es-PA', { 
+                                year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
+                            });
 
-                        el.innerHTML = `
-                            <span>Fecha Venc.: <span class="font-medium">${formattedDate}</span></span>
-                            <span class="font-semibold text-yellow-300">Interés: B/.${p.interest.toFixed(2)}</span>
-                        `;
-                        pendingPaymentsList.appendChild(el);
+                            el.innerHTML = `
+                                <span>Fecha Venc.: <span class="font-medium text-yellow-100">${formattedDate}</span></span>
+                                <span class="font-semibold text-yellow-300">Interés: B/.${p.interest.toFixed(2)}</span>
+                            `;
+                            pendingPaymentsList.appendChild(el);
+                        }
                     });
                 }
                 
@@ -1111,7 +1131,9 @@
                 if (pending.payments && pending.payments.length > 0) {
                     pending.payments.forEach(p => {
                         const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
-                        debtsQueue.push({ dateStr: qDate, amount: p.interest });
+                        if (!debtsQueue.some(d => d.dateStr === qDate)) {
+                            debtsQueue.push({ dateStr: qDate, amount: p.interest });
+                        }
                     });
                 }
 
@@ -1156,8 +1178,8 @@
                 }
 
                 client.unpaidPeriods = newUnpaidPeriods;
-                // Guardamos la leyenda completa para mostrarla abajo
-                client.lastPaymentLegend = legendLines.length > 0 ? legendLines.join('<br>') : 'Abono a Capital';
+                // Guardamos la leyenda completa
+                const finalLegend = legendLines.length > 0 ? legendLines.join('<br>') : 'Abono a Capital';
 
                 let paymentDescription = newUnpaidPeriods.length > 0 ? "Abono Parcial" : "Pago Completo";
                 if (amountPaid === principalPaid) paymentDescription = "Abono a Capital";
@@ -1167,10 +1189,11 @@
                 const newPayment = {
                     date: paymentDateStr,
                     desc: paymentDescription,
+                    legend: finalLegend, // GUARDAMOS LA LEYENDA AQUÍ
                     amount: amountPaid,
                     interestPaid: interestPaid,
                     principalPaid: principalPaid,
-                    pendingInterest: unpaidInterestTotal, // CONGELA EL SALDO EN LA COLUMNA
+                    pendingInterest: unpaidInterestTotal,
                     newBalance: newBalance
                 };
 
@@ -1258,13 +1281,27 @@
                             </tbody>
                         </table>
                         
-                        ${client.lastPaymentLegend ? 
-                            `<div class="mt-6 p-4 bg-gray-700 border-l-4 border-blue-400 rounded">
-                                <h4 class="font-bold text-blue-300 mb-2">Desglose del último pago registrado:</h4>
-                                <div class="text-gray-200 text-lg leading-relaxed">${client.lastPaymentLegend}</div>
-                             </div>` 
-                            : ''
-                        }
+                        ${(() => {
+                            let allLegends = [];
+                            client.payments.forEach(p => {
+                                if (p.legend) {
+                                    allLegends.push(`<div style="color: #e5e7eb; font-size: 16px; line-height: 1.6;">${p.legend}</div>`);
+                                } else if (p.desc && p.desc.includes('|')) {
+                                    let oldDesc = p.desc.split('|').map(s => s.trim()).join('<br>');
+                                    const formattedDate = formatDate(p.date);
+                                    allLegends.push(`<div style="color: #e5e7eb; font-size: 16px; line-height: 1.6;"><strong>Detalle del Pago (${formattedDate}):</strong><br>${oldDesc}</div>`);
+                                }
+                            });
+                            if (allLegends.length > 0) {
+                                return `<div style="margin-top: 24px; padding: 16px; background-color: #374151; border-left: 4px solid #60a5fa; border-radius: 8px;">
+                                            <h4 style="font-weight: bold; color: #93c5fd; margin-bottom: 12px; margin-top: 0;">Historial de Desgloses:</h4>
+                                            <div style="display: flex; flex-direction: column; gap: 16px;">
+                                                ${allLegends.join('<hr style="border: none; border-top: 1px dashed #4b5563; margin: 0;">')}
+                                            </div>
+                                        </div>`;
+                            }
+                            return '';
+                        })()}
                     </div>
                 `;
 
