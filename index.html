@@ -1109,177 +1109,185 @@
 
             // --- LÓGICA DE COMPARTIR POR WHATSAPP ---
             btnShareWhatsapp.addEventListener('click', () => {
-                // Buscamos el cliente en la db de activos para los datos actuales
                 const client = db.clients.find(c => c.id === currentClientId);
                 if (!client) return;
 
                 showLoading('Generando imagen...');
-                // Ocultar temporalmente el formulario de pago para que no salga en la foto
-                formRegisterPayment.style.display = 'none';
 
-                // TRUCO PARA QUE NO SALGA MOCHA NI COMO ARCHIVO:
-                // Reducimos temporalmente el relleno (padding) y el tamaño de letra de la tabla
-                // para que quepa de forma natural en la pantalla vertical del celular.
-                const tableContainer = statementCaptureArea.querySelector('.overflow-x-auto');
-                const table = tableContainer ? tableContainer.querySelector('table') : null;
-                const originalContainerClasses = tableContainer ? tableContainer.className : '';
-                const originalTableClasses = table ? table.className : '';
+                // 1. Crear un recibo "invisible" con dimensiones fijas perfectas para celulares
+                const captureDiv = document.createElement('div');
+                captureDiv.style.position = 'absolute';
+                captureDiv.style.top = '-9999px';
+                captureDiv.style.left = '0';
+                captureDiv.style.width = '700px'; // Fija la proporción ideal para que la tabla no se corte
+                captureDiv.style.backgroundColor = '#111827';
+                captureDiv.style.padding = '30px';
+                captureDiv.style.zIndex = '-1';
+
+                const interestLabel = client.period === 'mensual' ? 'Mensual' : 'Quincenal';
                 
-                if (tableContainer && table) {
-                    tableContainer.className = 'rounded-lg bg-gray-800 shadow-lg'; 
-                    table.className = 'w-full text-left text-[11px] leading-tight'; // Letra pequeña para encajar
+                // 2. Construir la estructura replicando el diseño nativo usando Tailwind
+                captureDiv.innerHTML = `
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+                        <h2 class="text-3xl font-bold text-blue-400 mb-4">${client.name}</h2>
+                        <div class="grid grid-cols-2 gap-3 text-lg">
+                            <p><span class="text-gray-400">Capital Reflejado:</span> <span class="font-medium text-white">B/.${client.principal.toFixed(2)}</span></p>
+                            <p><span class="text-gray-400">Tasa Interés:</span> <span class="font-medium text-white">${client.interestRate}% ${interestLabel}</span></p>
+                            <p><span class="text-gray-400">Fecha de Corte:</span> <span class="font-medium text-white">${formatDate(client.loanDate)}</span></p>
+                            <p><span class="text-gray-400">Periodicidad:</span> <span class="font-medium text-white capitalize">${client.period}</span></p>
+                        </div>
+                        <p class="mt-6 text-4xl font-bold"><span class="text-gray-400">Saldo Actual:</span> <span class="text-red-400">B/.${client.balance.toFixed(2)}</span></p>
+                    </div>
                     
-                    // Quitar los padding 'p-3' y cambiarlos a 'p-1' en las celdas
-                    const cells = table.querySelectorAll('th, td');
-                    cells.forEach(cell => {
-                        cell.dataset.oldClass = cell.className;
-                        cell.className = cell.className.replace('p-3', 'p-1').replace('text-sm', '');
-                    });
-                }
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+                        <h3 class="text-2xl font-semibold text-yellow-400 mb-4">Pagos Pendientes (Calculados a Hoy)</h3>
+                        <div class="space-y-2 text-lg text-white">
+                            ${document.getElementById('pending-payments-list').innerHTML}
+                        </div>
+                    </div>
 
-                html2canvas(statementCaptureArea, {
-                    backgroundColor: '#111827', // Fondo oscuro
-                    scale: 2 // Buena resolución sin hacer el archivo muy pesado
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                        <h3 class="text-2xl font-semibold text-white mb-4">Historial de Transacciones</h3>
+                        <table class="w-full text-left text-lg text-white">
+                            <thead class="bg-gray-700">
+                                <tr>
+                                    <th class="p-3 font-semibold">Fecha</th>
+                                    <th class="p-3 font-semibold">Descripción</th>
+                                    <th class="p-3 font-semibold">Pago</th>
+                                    <th class="p-3 font-semibold">Interés</th>
+                                    <th class="p-3 font-semibold">Abono Cap.</th>
+                                    <th class="p-3 font-semibold">Nuevo Saldo</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-700">
+                                ${document.getElementById('statement-table-body').innerHTML}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+
+                document.body.appendChild(captureDiv);
+
+                // 3. Tomar foto al recibo invisible
+                html2canvas(captureDiv, {
+                    backgroundColor: '#111827',
+                    scale: 2
                 }).then(canvas => {
-                    // Volver a mostrar el formulario de pago y restaurar la tabla
-                    formRegisterPayment.style.display = 'block';
-                    if (tableContainer && table) {
-                        tableContainer.className = originalContainerClasses;
-                        table.className = originalTableClasses;
-                        const cells = table.querySelectorAll('th, td');
-                        cells.forEach(cell => {
-                            if(cell.dataset.oldClass) {
-                                cell.className = cell.dataset.oldClass;
-                            }
-                        });
-                    }
+                    document.body.removeChild(captureDiv);
 
+                    // Forzar extensión JPG asegura que WhatsApp lo envíe como FOTO
                     canvas.toBlob(function(blob) {
                         if (navigator.share) {
                             const clientName = client.name || 'Cliente';
-                            const fileName = `Estado_Cuenta_${clientName.replace(/ /g, '_')}.png`;
-                            const file = new File([blob], fileName, { type: 'image/png' });
+                            const fileName = `Estado_Cuenta_${clientName.replace(/ /g, '_')}.jpg`;
+                            const file = new File([blob], fileName, { type: 'image/jpeg' });
                             
                             navigator.share({
                                 title: `Estado de Cuenta - ${clientName}`,
-                                text: `Aquí está el estado de cuenta de ${clientName}. Saldo actual: B/.${client.balance.toFixed(2)}`,
+                                text: `Estado de cuenta de ${clientName}. Saldo: B/.${client.balance.toFixed(2)}`,
                                 files: [file]
                             })
                             .then(() => hideLoading())
                             .catch((error) => {
                                 console.error('Error al compartir:', error);
                                 hideLoading();
-                                // No mostrar alerta si el usuario canceló el diálogo de compartir
-                                if (error.name !== 'AbortError') {
-                                    showCustomAlert('Error al compartir: ' + error.message);
-                                }
                             });
                         } else {
                             hideLoading();
-                            showCustomAlert('La función de compartir no es compatible con este navegador.');
+                            showCustomAlert('La función de compartir no es compatible.');
                         }
-                    }, 'image/png');
+                    }, 'image/jpeg', 0.95);
                 }).catch(err => {
-                    // Asegurarse de mostrar el formulario de nuevo y restaurar overflow si hay error
-                    formRegisterPayment.style.display = 'block';
-                    if (tableContainer && table) {
-                        tableContainer.className = originalContainerClasses;
-                        table.className = originalTableClasses;
-                    }
+                    if (document.body.contains(captureDiv)) document.body.removeChild(captureDiv);
                     console.error('Error con html2canvas:', err);
                     hideLoading();
-                    showCustomAlert('Error al generar la imagen.');
                 });
             });
 
-            // --- LÓGICA DE REPORTE GENERAL ---
+             // --- LÓGICA DE REPORTE GENERAL DETALLADO ---
             btnShowReport.addEventListener('click', () => {
                 renderAdminReport();
                 navigateTo('page-admin-report');
             });
 
-            function renderAdminReport() {
-                // Carga la DB COMPLETA para el reporte
-                const allTimeClients = getFullDB().clients;
-                
-                let totalInterestEarned = 0;
-                let totalPrincipalOutstanding = 0;
-                const quincenaReport = {}; // { '2025-11-15': { interest: 0, principal: 0 }, ... }
-                
-                allTimeClients.forEach(client => {
-                    // El capital activo SÍ debe ser solo de clientes activos (con saldo > 0)
-                    totalPrincipalOutstanding += client.balance > 0 ? client.balance : 0;
-                    
-                    client.payments.forEach(payment => {
-                        // Forzamos conversión a número para evitar errores si payment.interestPaid quedó como ""
-                        const intPaid = Number(payment.interestPaid) || 0;
-                        const prinPaid = Number(payment.principalPaid) || 0;
-
-                        totalInterestEarned += intPaid;
-                        
-                        const quincenaKey = getQuincenaKey(payment.date);
-                        if (!quincenaKey) return; // Continuar si la fecha es inválida
-                        if (!quincenaReport[quincenaKey]) {
-                            quincenaReport[quincenaKey] = { interest: 0, principal: 0 };
-                        }
-                        quincenaReport[quincenaKey].interest += intPaid;
-                        quincenaReport[quincenaKey].principal += prinPaid;
-                    });
-                });
-
-                // Actualizar totales
-                reportTotalOutstanding.textContent = `B/.${totalPrincipalOutstanding.toFixed(2)}`;
-                reportTotalInterest.textContent = `B/.${totalInterestEarned.toFixed(2)}`;
-
-                // Renderizar tabla
-                reportTableBody.innerHTML = '';
-                
-                // Ordenar quincenas por fecha, de más reciente a más antigua
-                const sortedKeys = Object.keys(quincenaReport).sort((a, b) => parseDateAsLocal(b) - parseDateAsLocal(a));
-                
-                if (sortedKeys.length === 0) {
-                    reportTableBody.innerHTML = '<tr><td colspan="3" class="p-3 text-center text-gray-400">No hay pagos registrados.</td></tr>';
-                    return;
-                }
-
-                sortedKeys.forEach(key => {
-                    const data = quincenaReport[key];
-                    const row = document.createElement('tr');
-                    row.className = 'text-gray-300';
-                    row.innerHTML = `
-                        <td class="p-3 text-sm">${formatDate(key)}</td>
-                        <td class="p-3 text-sm text-red-400">B/.${data.principal.toFixed(2)}</td>
-                        <td class="p-3 text-sm text-green-400">B/.${data.interest.toFixed(2)}</td>
-                    `;
-                    reportTableBody.appendChild(row);
+            // Darle vida al botón de Filtros que añadiste
+            const btnApplyFilters = document.getElementById('btn-apply-filters');
+            if (btnApplyFilters) {
+                btnApplyFilters.addEventListener('click', () => {
+                    renderAdminReport();
                 });
             }
 
-            function getQuincenaKey(dateString) {
-                const dLocal = parseDateAsLocal(dateString); // Usamos la función corregida
-                if (!dLocal) return null;
+            function renderAdminReport() {
+                const allTimeClients = getFullDB().clients;
                 
-                // Obtener el offset de la zona horaria local en minutos
-                const userTimezoneOffset = dLocal.getTimezoneOffset() * 60000;
-                // Ajustar la fecha a UTC "falso" para que los cálculos de día/mes sean correctos
-                const adjustedDate = new Date(dLocal.getTime() + userTimezoneOffset);
+                // Detectar los nuevos elementos del HTML
+                const elTotalLoaned = document.getElementById('report-total-loaned');
+                const elTotalOutstanding = document.getElementById('report-total-outstanding');
+                const elTotalPendingInt = document.getElementById('report-total-pending-interest');
+                const elTotalInterest = document.getElementById('report-total-interest');
+                
+                // Valores de los filtros
+                const filterName = document.getElementById('filter-client-name') ? document.getElementById('filter-client-name').value.toLowerCase() : '';
+                const filterDate = document.getElementById('filter-date') ? document.getElementById('filter-date').value : '';
 
-                const year = adjustedDate.getUTCFullYear();
-                const month = adjustedDate.getUTCMonth(); // 0-11
-                const day = adjustedDate.getUTCDate();
+                let globalLoaned = 0;
+                let globalOutstanding = 0;
+                let globalPendingInt = 0;
+                let globalInterestEarned = 0;
 
-                let keyDate;
-                if (day <= 15) {
-                    keyDate = new Date(Date.UTC(year, month, 15));
-                } else {
-                    keyDate = new Date(Date.UTC(year, month + 1, 0)); // Último día del mes actual en UTC
+                reportTableBody.innerHTML = '';
+
+                if (allTimeClients.length === 0) {
+                    reportTableBody.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-gray-400">No hay clientes registrados.</td></tr>';
+                    return;
                 }
-                
-                // Devolver en formato YYYY-MM-DD (local)
-                const y = keyDate.getUTCFullYear();
-                const m = (keyDate.getUTCMonth() + 1).toString().padStart(2, '0');
-                const d = keyDate.getUTCDate().toString().padStart(2, '0');
-                return `${y}-${m}-${d}`;
+
+                allTimeClients.forEach(client => {
+                    // Filtro de búsqueda por nombre
+                    if (filterName && !client.name.toLowerCase().includes(filterName)) return;
+                    // Filtro por fecha (Año-Mes)
+                    if (filterDate && client.loanDate.substring(0, 7) !== filterDate) return;
+
+                    const capitalPrestado = client.principal || 0;
+                    const saldoCapital = client.balance > 0 ? client.balance : 0;
+                    
+                    let interesGanado = 0;
+                    client.payments.forEach(payment => {
+                        interesGanado += (Number(payment.interestPaid) || 0);
+                    });
+
+                    // Calculamos la deuda al día de hoy para el reporte
+                    const pending = calculatePendingInterest(client, new Date());
+                    const interesPendiente = pending.totalInterest || 0;
+
+                    // Sumamos todo al resumen global superior
+                    globalLoaned += capitalPrestado;
+                    globalOutstanding += saldoCapital;
+                    globalPendingInt += interesPendiente;
+                    globalInterestEarned += interesGanado;
+
+                    const row = document.createElement('tr');
+                    row.className = 'text-gray-300 border-b border-gray-700';
+                    row.innerHTML = `
+                        <td class="p-2 font-medium whitespace-nowrap">${client.name}</td>
+                        <td class="p-2 text-white">B/.${capitalPrestado.toFixed(2)}</td>
+                        <td class="p-2 text-red-400">B/.${saldoCapital.toFixed(2)}</td>
+                        <td class="p-2 text-yellow-400">B/.${interesPendiente.toFixed(2)}</td>
+                        <td class="p-2 text-green-400">B/.${interesGanado.toFixed(2)}</td>
+                    `;
+                    reportTableBody.appendChild(row);
+                });
+
+                if (reportTableBody.innerHTML === '') {
+                    reportTableBody.innerHTML = '<tr><td colspan="5" class="p-3 text-center text-gray-400">Sin resultados en esta búsqueda.</td></tr>';
+                }
+
+                // Escribir los totales en tu nuevo cuadro resumen
+                if(elTotalLoaned) elTotalLoaned.textContent = `B/.${globalLoaned.toFixed(2)}`;
+                if(elTotalOutstanding) elTotalOutstanding.textContent = `B/.${globalOutstanding.toFixed(2)}`;
+                if(elTotalPendingInt) elTotalPendingInt.textContent = `B/.${globalPendingInt.toFixed(2)}`;
+                if(elTotalInterest) elTotalInterest.textContent = `B/.${globalInterestEarned.toFixed(2)}`;
             }
 
             // --- LÓGICA DE BACKUP Y RESTORE ---
