@@ -201,6 +201,7 @@
                                     <th class="p-3 text-sm font-semibold">Pago</th>
                                     <th class="p-3 text-sm font-semibold">Interés</th>
                                     <th class="p-3 text-sm font-semibold">Abono Capital</th>
+                                    <th class="p-3 text-sm font-semibold text-orange-400">Saldo Int.</th>
                                     <th class="p-3 text-sm font-semibold">Nuevo Saldo</th>
                                 </tr>
                             </thead>
@@ -751,11 +752,11 @@
                 });
 
                 statementTableBody.innerHTML = '';
-                addTransactionRow(client.loanDate, 'Préstamo Inicial', '', '', '', client.principal);
+                addTransactionRow(client.loanDate, 'Préstamo Inicial', '', '', '', '', client.principal);
                 
                 client.payments.forEach(p => {
                     const description = p.desc ? p.desc : 'Pago Registrado';
-                    addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.newBalance);
+                    addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.pendingInterest, p.newBalance);
                 });
 
                 renderPendingPayments(client);
@@ -771,15 +772,16 @@
                 navigateTo('page-statement');
             }
             
-            function addTransactionRow(date, desc, amount, interest, principal, balance) {
+            function addTransactionRow(date, desc, amount, interest, principal, pendingInterest, balance) {
                 const row = document.createElement('tr');
-                row.className = 'text-gray-300';
+                row.className = 'text-gray-300 border-b border-gray-700';
                 row.innerHTML = `
                     <td class="p-3 text-sm">${formatDate(date)}</td>
                     <td class="p-3 text-sm font-medium">${desc}</td>
                     <td class="p-3 text-sm text-green-400">${amount !== '' ? 'B/.' + Number(amount).toFixed(2) : '-'}</td>
                     <td class="p-3 text-sm text-yellow-400">${interest !== '' ? 'B/.' + Number(interest).toFixed(2) : '-'}</td>
                     <td class="p-3 text-sm text-red-400">${principal !== '' ? 'B/.' + Number(principal).toFixed(2) : '-'}</td>
+                    <td class="p-3 text-sm text-orange-400 font-bold">${amount !== '' ? 'B/.' + Number(pendingInterest || 0).toFixed(2) : '-'}</td>
                     <td class="p-3 text-sm font-bold">${balance !== '' ? 'B/.' + Number(balance).toFixed(2) : '-'}</td>
                 `;
                 statementTableBody.appendChild(row);
@@ -1071,56 +1073,70 @@
                 }
 
                 const pending = calculatePendingInterest(client, paymentDateObj);
-                
-                // --- NUEVO: Sumar interés acumulado viejo con el de esta quincena ---
                 const previousAccumulated = client.accumulatedInterest || 0;
-                const totalInterestDue = pending.totalInterest + previousAccumulated;
                 
-                let interestPaid = Math.min(amountPaid, totalInterestDue);
-                let principalPaid = amountPaid - interestPaid;
-                
-                if (principalPaid > client.balance) {
-                    // Si paga más del capital, el sobrante se ignora
-                    principalPaid = client.balance;
-                    // El pago total no puede ser mayor que el capital + interés pendiente
-                    interestPaid = Math.min(interestPaid, amountPaid - principalPaid);
+                let details = [];
+                let remainingToPay = amountPaid;
+                let calculatedInterestPaid = 0;
+
+                // 1. Pagar saldo atrasado viejo primero
+                if (previousAccumulated > 0) {
+                    if (remainingToPay >= previousAccumulated) {
+                        details.push(`Atraso anterior pagado (B/.${previousAccumulated.toFixed(2)})`);
+                        calculatedInterestPaid += previousAccumulated;
+                        remainingToPay -= previousAccumulated;
+                    } else if (remainingToPay > 0) {
+                        details.push(`Atraso anterior: abonó B/.${remainingToPay.toFixed(2)}, pendiente B/.${(previousAccumulated - remainingToPay).toFixed(2)}`);
+                        calculatedInterestPaid += remainingToPay;
+                        remainingToPay = 0;
+                    } else {
+                        details.push(`Atraso anterior pendiente (B/.${previousAccumulated.toFixed(2)})`);
+                    }
                 }
-                
-                // Asegurarse de no pagar más de lo necesario
-                if ( (interestPaid + principalPaid) > amountPaid ) {
-                    interestPaid = amountPaid - principalPaid;
+
+                // 2. Pagar quincenas actuales
+                if (pending.payments && pending.payments.length > 0) {
+                    pending.payments.forEach(p => {
+                        let qDate = `${p.date.getDate().toString().padStart(2, '0')}/${(p.date.getMonth() + 1).toString().padStart(2, '0')}`;
+                        if (remainingToPay >= p.interest) {
+                            details.push(`Int. ${qDate} pagado`);
+                            calculatedInterestPaid += p.interest;
+                            remainingToPay -= p.interest;
+                        } else if (remainingToPay > 0) {
+                            details.push(`Int. ${qDate}: abonó B/.${remainingToPay.toFixed(2)}, pend. B/.${(p.interest - remainingToPay).toFixed(2)}`);
+                            calculatedInterestPaid += remainingToPay;
+                            remainingToPay = 0;
+                        } else {
+                            details.push(`Int. ${qDate} pendiente (B/.${p.interest.toFixed(2)})`);
+                        }
+                    });
+                }
+
+                let interestPaid = calculatedInterestPaid;
+                let principalPaid = remainingToPay;
+
+                if (principalPaid > client.balance) {
+                    principalPaid = client.balance;
                 }
 
                 const newBalance = client.balance - principalPaid;
 
-                // --- NUEVO: Calcular si quedó interés sin pagar ---
+                const totalInterestDue = pending.totalInterest + previousAccumulated;
                 const unpaidInterest = totalInterestDue - interestPaid;
                 client.accumulatedInterest = unpaidInterest > 0.01 ? unpaidInterest : 0;
 
-                // --- NUEVO: Leyenda dinámica que identifica las quincenas exactas ---
-                let quincenasAfectadas = "";
-                if (pending.payments && pending.payments.length > 0) {
-                    // Extraemos los días y meses de las quincenas que se están pagando
-                    const fechas = pending.payments.map(p => {
-                        const d = p.date;
-                        return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                    });
-                    quincenasAfectadas = ` (Cubre quincenas: ${fechas.join(', ')})`;
-                }
-
-                let paymentDescription = "Pago Registrado";
-                if (client.accumulatedInterest > 0) {
-                    paymentDescription = `Abono parcial${quincenasAfectadas}. Queda pendiente: B/.${client.accumulatedInterest.toFixed(2)}`;
-                } else if (totalInterestDue > 0 && interestPaid === totalInterestDue) {
-                    paymentDescription = `Pago Completo${quincenasAfectadas}`;
+                let paymentDescription = details.length > 0 ? details.join(' | ') : 'Abono a Capital';
+                if (principalPaid > 0) {
+                    paymentDescription += ` | Abono a Cap: B/.${principalPaid.toFixed(2)}`;
                 }
 
                 const newPayment = {
                     date: paymentDateStr,
-                    desc: paymentDescription, // Se envía la leyenda al historial
+                    desc: paymentDescription,
                     amount: amountPaid,
                     interestPaid: interestPaid,
                     principalPaid: principalPaid,
+                    pendingInterest: client.accumulatedInterest, // NUEVA COLUMNA CONGELADA
                     newBalance: newBalance
                 };
 
@@ -1199,6 +1215,7 @@
                                     <th class="p-3 font-semibold">Pago</th>
                                     <th class="p-3 font-semibold">Interés</th>
                                     <th class="p-3 font-semibold">Abono Cap.</th>
+                                    <th class="p-3 font-semibold text-orange-400">Saldo Int.</th>
                                     <th class="p-3 font-semibold">Nuevo Saldo</th>
                                 </tr>
                             </thead>
