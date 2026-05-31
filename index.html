@@ -662,14 +662,20 @@
                         const newName = prompt("Corregir Nombre del Cliente:", client.name);
                         if (newName === null) return;
                         
-                        const newPrincipalStr = prompt("Corregir Capital Base (B/.):\n(Cambia el monto directamente sin dejar rastro en el historial)", client.principal);
+                        const newPrincipalStr = prompt("Corregir Capital Base (B/.):\n(Cambia el monto directamente sin dejar rastro)", client.principal);
                         if (newPrincipalStr === null) return;
                         
                         const newDate = prompt("Corregir Fecha del Préstamo (YYYY-MM-DD):", client.loanDate);
                         if (newDate === null) return;
 
+                        const currentAccumulated = client.accumulatedInterest || 0;
+                        const newAccumulatedStr = prompt("Corregir Interés Atrasado (B/.):\n(Monto de intereses que te debe de quincenas viejas)", currentAccumulated);
+                        if (newAccumulatedStr === null) return;
+
                         const newPrincipal = parseFloat(newPrincipalStr);
-                        if (newName.trim() === "" || isNaN(newPrincipal) || newPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
+                        const newAccumulated = parseFloat(newAccumulatedStr);
+
+                        if (newName.trim() === "" || isNaN(newPrincipal) || newPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim()) || isNaN(newAccumulated) || newAccumulated < 0) {
                             showCustomAlert("Datos inválidos. Asegúrese de usar el formato correcto.");
                             return;
                         }
@@ -681,6 +687,7 @@
                             fullDb.clients[clientIndex].name = newName.trim();
                             fullDb.clients[clientIndex].principal = newPrincipal;
                             fullDb.clients[clientIndex].loanDate = newDate.trim();
+                            fullDb.clients[clientIndex].accumulatedInterest = newAccumulated; // Se guarda el atraso corregido
                             fullDb.clients[clientIndex].balance += difference;
                             
                             saveFullDB(fullDb);
@@ -779,25 +786,35 @@
             }
 
             function renderPendingPayments(client) {
-                // Usamos new Date() para obtener la fecha local de HOY
                 const pending = calculatePendingInterest(client, new Date());
                 pendingPaymentsList.innerHTML = '';
 
-                if (pending.payments.length === 0 && client.balance > 0) {
+                const previousAccumulated = client.accumulatedInterest || 0;
+                const grandTotalInterest = pending.totalInterest + previousAccumulated;
+
+                if (pending.payments.length === 0 && previousAccumulated === 0 && client.balance > 0) {
                      pendingPaymentsList.innerHTML = '<p class="text-gray-400">No hay intereses vencidos.</p>';
-                } else if (pending.payments.length === 0 && client.balance <= 0) {
+                } else if (client.balance <= 0) {
                     pendingPaymentsList.innerHTML = '<p class="text-green-400 font-semibold">¡Préstamo Pagado!</p>';
                 } else {
+                    // Mostrar intereses atrasados que no se pagaron en cuotas anteriores
+                    if (previousAccumulated > 0) {
+                        const elAcc = document.createElement('div');
+                        elAcc.className = 'flex justify-between items-center bg-gray-700 p-2 rounded border-l-4 border-red-500';
+                        elAcc.innerHTML = `
+                            <span class="text-red-400 font-semibold">Atraso Acumulado (Cuotas pasadas):</span>
+                            <span class="font-bold text-red-400">B/.${previousAccumulated.toFixed(2)}</span>
+                        `;
+                        pendingPaymentsList.appendChild(elAcc);
+                    }
+
+                    // Mostrar los vencimientos nuevos
                     pending.payments.forEach(p => {
                         const el = document.createElement('div');
                         el.className = 'flex justify-between items-center bg-gray-700 p-2 rounded';
                         
-                        // Formateamos la fecha del objeto Date
                         const formattedDate = p.date.toLocaleDateString('es-PA', { 
-                            year: 'numeric', 
-                            month: '2-digit', 
-                            day: '2-digit',
-                            timeZone: 'UTC' // Porque la fecha del objeto Date ya está ajustada
+                            year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' 
                         });
 
                         el.innerHTML = `
@@ -810,7 +827,7 @@
                 
                 const totalEl = document.createElement('p');
                 totalEl.className = 'text-lg font-bold text-right mt-2 text-yellow-400';
-                totalEl.textContent = `Total Interés Pendiente: B/.${pending.totalInterest.toFixed(2)}`;
+                totalEl.textContent = `Total Interés Pendiente: B/.${grandTotalInterest.toFixed(2)}`;
                 pendingPaymentsList.appendChild(totalEl);
             }
 
@@ -1055,7 +1072,11 @@
 
                 const pending = calculatePendingInterest(client, paymentDateObj);
                 
-                let interestPaid = Math.min(amountPaid, pending.totalInterest);
+                // --- NUEVO: Sumar interés acumulado viejo con el de esta quincena ---
+                const previousAccumulated = client.accumulatedInterest || 0;
+                const totalInterestDue = pending.totalInterest + previousAccumulated;
+                
+                let interestPaid = Math.min(amountPaid, totalInterestDue);
                 let principalPaid = amountPaid - interestPaid;
                 
                 if (principalPaid > client.balance) {
@@ -1067,14 +1088,36 @@
                 
                 // Asegurarse de no pagar más de lo necesario
                 if ( (interestPaid + principalPaid) > amountPaid ) {
-                    // Esto puede pasar si el principalPaid fue ajustado
                     interestPaid = amountPaid - principalPaid;
                 }
 
                 const newBalance = client.balance - principalPaid;
 
+                // --- NUEVO: Calcular si quedó interés sin pagar ---
+                const unpaidInterest = totalInterestDue - interestPaid;
+                client.accumulatedInterest = unpaidInterest > 0.01 ? unpaidInterest : 0;
+
+                // --- NUEVO: Leyenda dinámica que identifica las quincenas exactas ---
+                let quincenasAfectadas = "";
+                if (pending.payments && pending.payments.length > 0) {
+                    // Extraemos los días y meses de las quincenas que se están pagando
+                    const fechas = pending.payments.map(p => {
+                        const d = p.date;
+                        return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+                    });
+                    quincenasAfectadas = ` (Cubre quincenas: ${fechas.join(', ')})`;
+                }
+
+                let paymentDescription = "Pago Registrado";
+                if (client.accumulatedInterest > 0) {
+                    paymentDescription = `Abono parcial${quincenasAfectadas}. Queda pendiente: B/.${client.accumulatedInterest.toFixed(2)}`;
+                } else if (totalInterestDue > 0 && interestPaid === totalInterestDue) {
+                    paymentDescription = `Pago Completo${quincenasAfectadas}`;
+                }
+
                 const newPayment = {
-                    date: paymentDateStr, // Guardar como string "YYYY-MM-DD"
+                    date: paymentDateStr,
+                    desc: paymentDescription, // Se envía la leyenda al historial
                     amount: amountPaid,
                     interestPaid: interestPaid,
                     principalPaid: principalPaid,
