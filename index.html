@@ -105,6 +105,9 @@
                 <button id="btn-close-app" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300 mt-4">
                     Cerrar Aplicación
                 </button>
+                <button id="btn-delete-all" class="w-full bg-red-900 hover:bg-red-950 text-white font-bold py-3 px-4 rounded-lg shadow-lg transition duration-300 mt-4 border border-red-500">
+                    Borrar Todos los Datos (Modo Pruebas)
+                </button>
             </div>
         </div>
 
@@ -315,6 +318,7 @@
             const btnBackup = document.getElementById('btn-backup');
             const btnRestore = document.getElementById('btn-restore');
             const btnCloseApp = document.getElementById('btn-close-app');
+            const btnDeleteAll = document.getElementById('btn-delete-all');
             const restoreInput = document.getElementById('restore-input');
             const reportTotalOutstanding = document.getElementById('report-total-outstanding');
             const reportTotalInterest = document.getElementById('report-total-interest');
@@ -625,21 +629,80 @@
                 const interestLabel = client.period === 'mensual' ? 'Mensual' : 'Quincenal';
 
                 statementHeader.innerHTML = `
-                    <h2 class="text-2xl font-bold text-blue-400 mb-2">${client.name}</h2>
+                    <div class="flex justify-between items-start mb-2">
+                        <h2 class="text-2xl font-bold text-blue-400">${client.name}</h2>
+                        <button id="btn-edit-client" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-1 px-2 rounded shadow transition duration-300">Ampliación / Ajuste</button>
+                    </div>
                     <div class="grid grid-cols-2 gap-2 text-sm">
-                        <p><span class="text-gray-400">Capital Inicial:</span> <span class="font-medium">B/.${client.principal.toFixed(2)}</span></p>
+                        <p><span class="text-gray-400">Capital Reflejado:</span> <span class="font-medium">B/.${client.principal.toFixed(2)}</span></p>
                         <p><span class="text-gray-400">Tasa Interés:</span> <span class="font-medium">${client.interestRate}% ${interestLabel}</span></p>
-                        <p><span class="text-gray-400">Fecha Préstamo:</span> <span class="font-medium">${formatDate(client.loanDate)}</span></p>
+                        <p><span class="text-gray-400">Fecha de Corte/Ajuste:</span> <span class="font-medium">${formatDate(client.loanDate)}</span></p>
                         <p><span class="text-gray-400">Periodicidad:</span> <span class="font-medium capitalize">${client.period}</span></p>
                     </div>
                     <p class="mt-4 text-3xl font-bold"><span class="text-gray-400">Saldo Actual:</span> <span class="text-red-400">B/.${client.balance.toFixed(2)}</span></p>
                 `;
 
+                // Añadir lógica de ajuste/ampliación al botón
+                document.getElementById('btn-edit-client').addEventListener('click', () => {
+                    setTimeout(() => {
+                        const newName = prompt("Nombre del Cliente:", client.name);
+                        if (newName === null) return;
+                        
+                        // Pedir SOLO EL MONTO NUEVO que se está prestando extra (100)
+                        const addedPrincipalStr = prompt("Monto NUEVO prestado (B/.):\nEj: Si hoy prestas 100 más, escribe 100.\nSi necesitas restar deuda por un error, usa signo negativo (ej: -20).", "0");
+                        if (addedPrincipalStr === null) return;
+
+                        // Pedir la nueva fecha (muy importante para reiniciar el reloj de cobro de intereses)
+                        const newDate = prompt("Fecha de la Ampliación (YYYY-MM-DD):\nLos nuevos intereses se cobrarán a partir de esta fecha.", new Date().toISOString().split('T')[0]);
+                        if (newDate === null) return;
+
+                        const addedPrincipal = parseFloat(addedPrincipalStr);
+                        if (newName.trim() === "" || isNaN(addedPrincipal) || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
+                            showCustomAlert("Datos inválidos. Revise el monto y el formato de fecha (YYYY-MM-DD).");
+                            return;
+                        }
+
+                        const fullDb = getFullDB();
+                        const clientIndex = fullDb.clients.findIndex(c => c.id === currentClientId);
+                        
+                        if (clientIndex !== -1) {
+                            const newBalance = client.balance + addedPrincipal;
+                            const newPrincipal = client.principal + addedPrincipal;
+                            
+                            // 1. Actualizar los datos maestros
+                            fullDb.clients[clientIndex].name = newName.trim();
+                            fullDb.clients[clientIndex].principal = newPrincipal;
+                            fullDb.clients[clientIndex].loanDate = newDate.trim(); // Se actualiza para futuros cobros
+                            fullDb.clients[clientIndex].balance = newBalance;
+
+                            // 2. Registrar la acción en el historial visible
+                            if (addedPrincipal !== 0) {
+                                const actionName = addedPrincipal > 0 ? "Ampliación Préstamo" : "Ajuste de Saldo";
+                                const adjustmentPayment = {
+                                    date: newDate.trim(),
+                                    desc: actionName, // <-- Propiedad clave para el historial
+                                    amount: "",
+                                    interestPaid: "",
+                                    principalPaid: -addedPrincipal, // Se pone en negativo porque representa un aumento de deuda
+                                    newBalance: newBalance
+                                };
+                                fullDb.clients[clientIndex].payments.push(adjustmentPayment);
+                            }
+                            
+                            saveFullDB(fullDb);
+                            loadActiveClientsDB();
+                            showClientStatement(currentClientId); 
+                        }
+                    }, 100);
+                });
+
                 statementTableBody.innerHTML = '';
                 addTransactionRow(client.loanDate, 'Préstamo Inicial', '', '', '', client.principal);
                 
                 client.payments.forEach(p => {
-                    addTransactionRow(p.date, 'Pago Registrado', p.amount, p.interestPaid, p.principalPaid, p.newBalance);
+                    // Si el pago tiene una descripción guardada la muestra, si no usa "Pago Registrado"
+                    const description = p.desc ? p.desc : 'Pago Registrado';
+                    addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.newBalance);
                 });
 
                 renderPendingPayments(client);
@@ -1008,21 +1071,36 @@
                 // Ocultar temporalmente el formulario de pago para que no salga en la foto
                 formRegisterPayment.style.display = 'none';
 
-                // Remover overflow temporalmente para capturar la tabla completa
+                // Expandir el área de captura temporalmente para que html2canvas no corte la tabla "mochada"
+                const originalWidth = statementCaptureArea.style.width;
+                const originalMaxWidth = statementCaptureArea.style.maxWidth;
+                
+                statementCaptureArea.style.width = statementCaptureArea.scrollWidth + 'px';
+                statementCaptureArea.style.maxWidth = 'none';
+
+                // Remover TODAS las restricciones de tabla para la foto
                 const tableContainer = statementCaptureArea.querySelector('.overflow-x-auto');
-                const originalClasses = tableContainer ? tableContainer.className : '';
-                if (tableContainer) {
-                    tableContainer.className = 'rounded-lg bg-gray-800 shadow-lg';
+                const table = tableContainer ? tableContainer.querySelector('table') : null;
+                const originalContainerClasses = tableContainer ? tableContainer.className : '';
+                const originalTableClasses = table ? table.className : '';
+                
+                if (tableContainer && table) {
+                    tableContainer.className = 'rounded-lg bg-gray-800 shadow-lg'; // Quita el overflow-x-auto
+                    table.className = 'w-full min-w-max text-left'; // Forzamos min-w-max para que el texto no se apriete
                 }
 
                 html2canvas(statementCaptureArea, {
                     backgroundColor: '#111827', // Fondo oscuro
-                    scale: 2 // Mejorar resolución
+                    scale: 2, // Mejorar resolución
+                    windowWidth: statementCaptureArea.scrollWidth // Fundamental para que la imagen salga completa
                 }).then(canvas => {
-                    // Volver a mostrar el formulario de pago y restaurar el overflow
+                    // Volver a mostrar el formulario de pago y restaurar todo a la normalidad
                     formRegisterPayment.style.display = 'block';
-                    if (tableContainer) {
-                        tableContainer.className = originalClasses;
+                    statementCaptureArea.style.width = originalWidth;
+                    statementCaptureArea.style.maxWidth = originalMaxWidth;
+                    if (tableContainer && table) {
+                        tableContainer.className = originalContainerClasses;
+                        table.className = originalTableClasses;
                     }
 
                     canvas.toBlob(function(blob) {
@@ -1237,6 +1315,18 @@
                     // location.href = 'about:blank';
                 }, "Cerrar");
             });
+
+            // --- BOTÓN DE BORRAR TODOS LOS DATOS ---
+            if (btnDeleteAll) {
+                btnDeleteAll.addEventListener('click', () => {
+                    showCustomConfirm("⚠️ PELIGRO: ¿Estás seguro de borrar TODOS LOS CLIENTES Y PAGOS? Esta acción no se puede deshacer.", () => {
+                        localStorage.removeItem(DB_KEY); // Borrar la base de datos completa
+                        db = { clients: [] }; // Vaciar memoria
+                        initializeApp(); // Reiniciar app
+                        showCustomAlert("Todos los datos han sido borrados con éxito.");
+                    }, "Borrar Todo");
+                });
+            }
 
             // Iniciar la aplicación
             initializeApp();
