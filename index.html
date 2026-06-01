@@ -760,8 +760,11 @@
                     if (description.includes('|')) {
                         description = "Abono Parcial (Ver Desglose)";
                     }
-                    // Mostrar la deuda de interés completa en la tabla. Si es un registro viejo, muestra lo que había.
-                    const interestToShow = p.totalInterestDue !== undefined ? p.totalInterestDue : p.interestPaid;
+                    // Reconstrucción matemática para registros viejos: Suma el interés que se pagó + el saldo que quedó debiendo
+                    let interestToShow = p.totalInterestDue;
+                    if (interestToShow === undefined) {
+                        interestToShow = (Number(p.interestPaid) || 0) + (Number(p.pendingInterest) || 0);
+                    }
                     addTransactionRow(p.date, description, p.amount, interestToShow, p.principalPaid, p.pendingInterest, p.newBalance);
                 });
 
