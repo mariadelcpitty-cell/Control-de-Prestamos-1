@@ -760,7 +760,9 @@
                     if (description.includes('|')) {
                         description = "Abono Parcial (Ver Desglose)";
                     }
-                    addTransactionRow(p.date, description, p.amount, p.interestPaid, p.principalPaid, p.pendingInterest, p.newBalance);
+                    // Mostrar la deuda de interés completa en la tabla. Si es un registro viejo, muestra lo que había.
+                    const interestToShow = p.totalInterestDue !== undefined ? p.totalInterestDue : p.interestPaid;
+                    addTransactionRow(p.date, description, p.amount, interestToShow, p.principalPaid, p.pendingInterest, p.newBalance);
                 });
 
                 // --- Mostrar leyendas detalladas debajo del historial ---
@@ -1191,7 +1193,8 @@
                     desc: paymentDescription,
                     legend: finalLegend, // GUARDAMOS LA LEYENDA AQUÍ
                     amount: amountPaid,
-                    interestPaid: interestPaid,
+                    interestPaid: interestPaid, // Lo mantenemos intacto para que no se dañe tu Reporte de ganancias
+                    totalInterestDue: totalInterestDue, // NUEVO: Guarda la deuda completa de interés para mostrarla en la tabla
                     principalPaid: principalPaid,
                     pendingInterest: unpaidInterestTotal,
                     newBalance: newBalance
