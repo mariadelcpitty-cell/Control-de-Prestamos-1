@@ -470,7 +470,10 @@
             });
 
             btnsBack.forEach(btn => {
-                btn.addEventListener('click', () => navigateTo('page-list'));
+                btn.addEventListener('click', () => {
+                    renderClientList(); // Obliga al DOM a repintar la lista y calcular las alertas frescas
+                    navigateTo('page-list');
+                });
             });
 
             // --- LÓGICA DE FORMULARIO DINÁMICO ---
@@ -574,11 +577,24 @@
                 });
 
                 sortedClients.forEach(client => {
+                    // Verificamos de forma dinámica si hay atrasos o intereses pendientes generados
+                    let isLate = false;
+                    if ((client.unpaidPeriods && client.unpaidPeriods.length > 0) || (client.accumulatedInterest && client.accumulatedInterest > 0)) {
+                        isLate = true;
+                    } else {
+                        const pending = calculatePendingInterest(client, new Date());
+                        if (pending.totalInterest > 0) {
+                            isLate = true; // Ya se generó el cobro tras los 2 días de la fecha de corte
+                        }
+                    }
+                    
+                    const alertBadge = isLate ? `<span class="ml-2 text-[10px] bg-red-900 text-white font-bold px-2 py-0.5 rounded border border-red-500 animate-pulse">⚠️ Atrasado</span>` : '';
+
                     const el = document.createElement('div');
                     el.className = 'flex justify-between items-center bg-gray-800 p-4 rounded-lg shadow cursor-pointer hover:bg-gray-700 transition duration-300';
                     el.innerHTML = `
                         <div>
-                            <h3 class="text-lg font-semibold text-white">${client.name}</h3>
+                            <h3 class="text-lg font-semibold text-white flex items-center">${client.name}${alertBadge}</h3>
                             <p class="text-sm text-gray-400">Préstamo: B/.${client.principal.toFixed(2)} | Saldo: B/.${client.balance.toFixed(2)}</p>
                         </div>
                         <span class="text-blue-400 font-semibold">&rarr;</span>
@@ -669,14 +685,9 @@
                         const newDate = prompt("Corregir Fecha del Préstamo (YYYY-MM-DD):", client.loanDate);
                         if (newDate === null) return;
 
-                        const currentAccumulated = client.accumulatedInterest || 0;
-                        const newAccumulatedStr = prompt("Corregir Interés Atrasado (B/.):\n(Monto de intereses que te debe de quincenas viejas)", currentAccumulated);
-                        if (newAccumulatedStr === null) return;
-
                         const newPrincipal = parseFloat(newPrincipalStr);
-                        const newAccumulated = parseFloat(newAccumulatedStr);
 
-                        if (newName.trim() === "" || isNaN(newPrincipal) || newPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim()) || isNaN(newAccumulated) || newAccumulated < 0) {
+                        if (newName.trim() === "" || isNaN(newPrincipal) || newPrincipal <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(newDate.trim())) {
                             showCustomAlert("Datos inválidos. Asegúrese de usar el formato correcto.");
                             return;
                         }
@@ -688,7 +699,7 @@
                             fullDb.clients[clientIndex].name = newName.trim();
                             fullDb.clients[clientIndex].principal = newPrincipal;
                             fullDb.clients[clientIndex].loanDate = newDate.trim();
-                            fullDb.clients[clientIndex].accumulatedInterest = newAccumulated; // Se guarda el atraso corregido
+                            // El interés pendiente y la alerta de la lista se recalcularán automáticamente en base a la nueva fecha
                             fullDb.clients[clientIndex].balance += difference;
                             
                             saveFullDB(fullDb);
@@ -959,28 +970,49 @@
                     nextDueDate = getNextPaymentDate(nextDueDate, client.period, client.loanDate);
                 }
 
-                // 2. Lógica para mostrar interés próximo si faltan 6 días o menos
+                // 2. Lógica para mostrar el próximo interés a partir del 2do día después del corte
                 if (currentBalance > 0) {
-                    // 'nextDueDate' ahora es la *próxima* fecha de vencimiento (futura)
-                    
                     // 'today' ya está al final del día, usemos 'upToDate' para el inicio del día
                     const compareDate = new Date(upToDate.getTime());
                     compareDate.setHours(0, 0, 0, 0); // Inicio del día (local)
                     
-                    const nextDueDateStart = new Date(nextDueDate.getTime());
-                    nextDueDateStart.setHours(0, 0, 0, 0); // Inicio del día de vencimiento (local)
+                    // Calcular la fecha de corte anterior (cycleStartDate)
+                    let cycleStartDate = parseDateAsLocal(client.loanDate);
+                    let tempNext = getNextPaymentDate(cycleStartDate, client.period, client.loanDate);
+                    
+                    // Respetar la lógica de gracia si fue el primer periodo
+                    if (client.payments.length === 0 && client.period === 'quincenal') {
+                        const lD = parseDateAsLocal(client.loanDate);
+                        lD.setHours(0, 0, 0, 0);
+                        const fD = new Date(tempNext.getTime());
+                        fD.setHours(0, 0, 0, 0);
+                        const dDiff = Math.round((fD.getTime() - lD.getTime()) / (1000 * 60 * 60 * 24));
+                        if (dDiff <= 4 && dDiff > 0) {
+                            cycleStartDate = new Date(tempNext.getTime());
+                            tempNext = getNextPaymentDate(tempNext, client.period, client.loanDate);
+                        }
+                    }
+                    
+                    // Avanzar hasta encontrar el corte justo antes del próximo vencimiento (nextDueDate)
+                    while (tempNext.getTime() < nextDueDate.getTime()) {
+                        cycleStartDate = new Date(tempNext.getTime());
+                        tempNext = getNextPaymentDate(tempNext, client.period, client.loanDate);
+                    }
+                    
+                    cycleStartDate.setHours(0, 0, 0, 0);
                     
                     // CORRECCIÓN: Verificar si el día de hoy es el mismo día del último pago.
                     const lastPaymentDate = (client.payments.length > 0) ? parseDateAsLocal(client.payments[client.payments.length - 1].date) : null;
                     const isSameDayAsLastPayment = lastPaymentDate && (compareDate.toDateString() === lastPaymentDate.toDateString());
 
-                    const diffTime = nextDueDateStart.getTime() - compareDate.getTime();
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    // Diferencia de días desde el corte anterior hasta hoy
+                    const diffTimeSinceLastCut = compareDate.getTime() - cycleStartDate.getTime();
+                    const daysSinceLastCut = Math.round(diffTimeSinceLastCut / (1000 * 60 * 60 * 24));
 
-                    // Si faltan 6 días o menos (y no es un vencimiento pasado)
-                    // Y si no hemos agregado ya este pago (en el loop de vencidos)
-                    // Y si NO ES EL MISMO DÍA que acabamos de pagar
-                    if (diffDays >= 0 && diffDays <= 6 && 
+                    // Si han pasado 2 o más días desde el corte anterior (ej. Vence 31, 2 de junio = 2 días)
+                    // Y no hemos agregado ya este pago (en el loop de vencidos)
+                    // Y NO ES EL MISMO DÍA que acabamos de pagar
+                    if (daysSinceLastCut >= 2 && 
                         !pendingPayments.some(p => p.date.getTime() === nextDueDate.getTime()) && 
                         !isSameDayAsLastPayment) { 
                         
@@ -988,18 +1020,17 @@
                         totalInterest += interestForPeriod;
                         pendingPayments.push({ date: new Date(nextDueDate.getTime()), interest: interestForPeriod });
                     } 
-                    // CASO ESPECIAL: Si el cliente quiere pagar por adelantado (más de 6 días antes)
-                    // Y no hay NINGÚN pago pendiente (ni vencido, ni próximo)
-                    else if (pendingPayments.length === 0 && client.balance > 0 && diffDays > 6) {
+                    // CASO ESPECIAL: Si el cliente quiere pagar por adelantado (antes de los 2 días)
+                    // Y no hay NINGÚN pago pendiente
+                    else if (pendingPayments.length === 0 && client.balance > 0 && daysSinceLastCut < 2) {
                         // upToDate es la fecha del pago, no "hoy".
-                        // Si la fecha del pago es posterior a la última fecha de tx...
                         if(upToDate > lastTransactionDate) {
                             let interestForPeriod = client.balance * (client.interestRate / 100);
                             totalInterest += interestForPeriod;
                             pendingPayments.push({ date: new Date(nextDueDate.getTime()), interest: interestForPeriod });
                         }
                     }
-                }
+                
                 
                 // Eliminar duplicados si los hubiera
                 const uniquePayments = [];
