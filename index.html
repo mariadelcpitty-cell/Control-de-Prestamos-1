@@ -896,7 +896,7 @@
 
             // --- LÓGICA DE CÁLCULO DE INTERÉS ---
 
-            function calculatePendingInterest(client, upToDate) {
+            function calculatePendingInterest(client, upToDate, isForPayment = false) {
                 // 'upToDate' es un objeto Date() local (ej. hoy, o la fecha de pago)
                 const today = new Date(upToDate.getTime()); 
                 today.setHours(23, 59, 59, 999); // Final del día (local)
@@ -1021,8 +1021,8 @@
                         pendingPayments.push({ date: new Date(nextDueDate.getTime()), interest: interestForPeriod });
                     } 
                     // CASO ESPECIAL: Si el cliente quiere pagar por adelantado (antes de los 6 días)
-                    // Y no hay NINGÚN pago pendiente
-                    else if (pendingPayments.length === 0 && client.balance > 0 && daysSinceLastCut < 6) {
+                    // Y no hay NINGÚN pago pendiente. (Solo se activa al registrar pago).
+                    else if (isForPayment && pendingPayments.length === 0 && client.balance > 0 && daysSinceLastCut < 6) {
                         // upToDate es la fecha del pago, no "hoy".
                         if(upToDate > lastTransactionDate) {
                             let interestForPeriod = client.balance * (client.interestRate / 100);
@@ -1153,7 +1153,7 @@
                     }
                 }
 
-                const pending = calculatePendingInterest(client, paymentDateObj);
+                const pending = calculatePendingInterest(client, paymentDateObj, true); // true = es un pago
                 
                 // 1. Unir las deudas viejas con las nuevas manteniendo sus fechas
                 let debtsQueue = client.unpaidPeriods ? [...client.unpaidPeriods] : [];
