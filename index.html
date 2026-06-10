@@ -764,9 +764,18 @@
 
                             if (oldPending.payments && oldPending.payments.length > 0) {
                                 oldPending.payments.forEach(p => {
-                                    const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
-                                    if (!debtsQueue.some(d => d.dateStr === qDate)) {
-                                        debtsQueue.push({ dateStr: qDate, amount: p.interest });
+                                    // Filtro: Solo guardar como deuda histórica si la fecha ya pasó o es hoy.
+                                    // Los intereses futuros (como el del 15) se descartarán para recalcularse con el nuevo capital.
+                                    const pDateOnly = new Date(p.date.getTime());
+                                    pDateOnly.setHours(0, 0, 0, 0);
+                                    const extDateOnly = new Date(extensionDateObj.getTime());
+                                    extDateOnly.setHours(0, 0, 0, 0);
+
+                                    if (pDateOnly <= extDateOnly) {
+                                        const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
+                                        if (!debtsQueue.some(d => d.dateStr === qDate)) {
+                                            debtsQueue.push({ dateStr: qDate, amount: p.interest });
+                                        }
                                     }
                                 });
                             }
