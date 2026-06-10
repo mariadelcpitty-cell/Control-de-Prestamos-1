@@ -569,26 +569,48 @@
                     return;
                 }
                 
-                // Ordenar por fecha de préstamo, más reciente primero
-                const sortedClients = [...db.clients].sort((a, b) => {
+                // 1. Mapear clientes para calcular su deuda total e identificarlos como morosos
+                const clientsWithDebtInfo = db.clients.map(client => {
+                    const pending = calculatePendingInterest(client, new Date());
+                    
+                    // Sumar atrasos viejos
+                    let oldDebtAmount = 0;
+                    if (client.unpaidPeriods && client.unpaidPeriods.length > 0) {
+                        oldDebtAmount += client.unpaidPeriods.reduce((sum, d) => sum + d.amount, 0);
+                    }
+                    if (client.accumulatedInterest > 0) {
+                        oldDebtAmount += client.accumulatedInterest;
+                    }
+                    
+                    const totalPendingDebt = pending.totalInterest + oldDebtAmount;
+                    const isLate = totalPendingDebt > 0;
+
+                    return {
+                        ...client,
+                        totalPendingDebt,
+                        isLate
+                    };
+                });
+
+                // 2. Ordenar: Primero los morosos (por mayor deuda), luego los que están al día (por fecha)
+                const sortedClients = clientsWithDebtInfo.sort((a, b) => {
+                    // Si uno está atrasado y el otro no, el atrasado va primero
+                    if (a.isLate && !b.isLate) return -1;
+                    if (!a.isLate && b.isLate) return 1;
+                    
+                    // Si ambos están atrasados, ordenar por mayor monto de deuda pendiente
+                    if (a.isLate && b.isLate) {
+                        return b.totalPendingDebt - a.totalPendingDebt;
+                    }
+                    
+                    // Si ambos están al día, ordenar por fecha de préstamo más reciente
                     const dateA = parseDateAsLocal(a.loanDate);
                     const dateB = parseDateAsLocal(b.loanDate);
                     return dateB - dateA;
                 });
 
                 sortedClients.forEach(client => {
-                    // Verificamos de forma dinámica si hay atrasos o intereses pendientes generados
-                    let isLate = false;
-                    if ((client.unpaidPeriods && client.unpaidPeriods.length > 0) || (client.accumulatedInterest && client.accumulatedInterest > 0)) {
-                        isLate = true;
-                    } else {
-                        const pending = calculatePendingInterest(client, new Date());
-                        if (pending.totalInterest > 0) {
-                            isLate = true; // Ya se generó el cobro tras los 6 días de la fecha de corte
-                        }
-                    }
-                    
-                    const alertBadge = isLate ? `<span class="ml-2 text-[10px] bg-red-900 text-white font-bold px-2 py-0.5 rounded border border-red-500 animate-pulse">⚠️ Atrasado</span>` : '';
+                    const alertBadge = client.isLate ? `<span class="ml-2 text-[10px] bg-red-900 text-white font-bold px-2 py-0.5 rounded border border-red-500 animate-pulse">⚠️ Atrasado</span>` : '';
 
                     const el = document.createElement('div');
                     el.className = 'flex justify-between items-center bg-gray-800 p-4 rounded-lg shadow cursor-pointer hover:bg-gray-700 transition duration-300';
