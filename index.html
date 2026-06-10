@@ -728,8 +728,31 @@
                         const clientIndex = fullDb.clients.findIndex(c => c.id === currentClientId);
                         
                         if (clientIndex !== -1) {
-                            const newBalance = client.balance + addedPrincipal;
-                            const newPrincipal = client.principal + addedPrincipal;
+                            const currentClientData = fullDb.clients[clientIndex];
+                            const extensionDateObj = parseDateAsLocal(newDate.trim());
+
+                            // Capturar e inmunizar intereses vencidos antes de la ampliación con el capital viejo
+                            const oldPending = calculatePendingInterest(currentClientData, extensionDateObj, false);
+                            let debtsQueue = currentClientData.unpaidPeriods ? [...currentClientData.unpaidPeriods] : [];
+                            
+                            if (currentClientData.accumulatedInterest > 0) {
+                                debtsQueue.unshift({ dateStr: 'Atraso Ant.', amount: currentClientData.accumulatedInterest });
+                                fullDb.clients[clientIndex].accumulatedInterest = 0;
+                            }
+
+                            if (oldPending.payments && oldPending.payments.length > 0) {
+                                oldPending.payments.forEach(p => {
+                                    const qDate = `${p.date.getUTCDate().toString().padStart(2, '0')}/${(p.date.getUTCMonth() + 1).toString().padStart(2, '0')}/${p.date.getUTCFullYear()}`;
+                                    if (!debtsQueue.some(d => d.dateStr === qDate)) {
+                                        debtsQueue.push({ dateStr: qDate, amount: p.interest });
+                                    }
+                                });
+                            }
+                            fullDb.clients[clientIndex].unpaidPeriods = debtsQueue;
+
+                            // Ahora sí, aplicar la ampliación sumando los capitales de forma correcta
+                            const newBalance = currentClientData.balance + addedPrincipal;
+                            const newPrincipal = currentClientData.principal + addedPrincipal;
                             
                             fullDb.clients[clientIndex].principal = newPrincipal;
                             fullDb.clients[clientIndex].loanDate = newDate.trim();
@@ -740,7 +763,7 @@
                                 desc: "Ampliación Préstamo",
                                 amount: "",
                                 interestPaid: "",
-                                principalPaid: -addedPrincipal, // Negativo porque es dinero que suma a la deuda
+                                principalPaid: -addedPrincipal, // Negativo .,porque es dinero que suma a la deuda
                                 newBalance: newBalance
                             };
                             fullDb.clients[clientIndex].payments.push(adjustmentPayment);
@@ -1001,20 +1024,29 @@
                     
                     cycleStartDate.setHours(0, 0, 0, 0);
                     
-                    // CORRECCIÓN: Verificar si el día de hoy es el mismo día del último pago.
-                    const lastPaymentDate = (client.payments.length > 0) ? parseDateAsLocal(client.payments[client.payments.length - 1].date) : null;
+                    // CORRECCIÓN: Verificar la última transacción para saber si es nuevo o ampliación
+                    const lastPayment = (client.payments.length > 0) ? client.payments[client.payments.length - 1] : null;
+                    const lastPaymentDate = lastPayment ? parseDateAsLocal(lastPayment.date) : null;
                     const isSameDayAsLastPayment = lastPaymentDate && (compareDate.toDateString() === lastPaymentDate.toDateString());
+                    
+                    // Identificar si es préstamo nuevo o acaba de ser ampliado
+                    const isExtension = lastPayment && lastPayment.desc === "Ampliación Préstamo";
+                    const isNewLoan = client.payments.length === 0;
 
                     // Diferencia de días desde el corte anterior hasta hoy
                     const diffTimeSinceLastCut = compareDate.getTime() - cycleStartDate.getTime();
                     const daysSinceLastCut = Math.round(diffTimeSinceLastCut / (1000 * 60 * 60 * 24));
 
-                    // Si han pasado 6 o más días desde el corte anterior (ej. Vence 31, 6 de junio = 6 días)
+                    // ¿Mostrar interés proyectado de inmediato? 
+                    // Sí, si pasaron 6 días (gracia de atrasos), O si es un préstamo nuevo, O si es una ampliación.
+                    const showProjectedInterest = (daysSinceLastCut >= 6) || isNewLoan || isExtension;
+
+                    // Mostrar si se cumple la condición de visibilidad
                     // Y no hemos agregado ya este pago (en el loop de vencidos)
-                    // Y NO ES EL MISMO DÍA que acabamos de pagar
-                    if (daysSinceLastCut >= 6 && 
+                    // Y NO ES EL MISMO DÍA que acabamos de pagar un abono normal (permitir visualización si es ampliación)
+                    if (showProjectedInterest && 
                         !pendingPayments.some(p => p.date.getTime() === nextDueDate.getTime()) && 
-                        !isSameDayAsLastPayment) { 
+                        (!isSameDayAsLastPayment || isExtension)) { 
                         
                         let interestForPeriod = client.balance * (client.interestRate / 100);
                         totalInterest += interestForPeriod;
@@ -1022,7 +1054,7 @@
                     } 
                     // CASO ESPECIAL: Si el cliente quiere pagar por adelantado (antes de los 6 días)
                     // Y no hay NINGÚN pago pendiente. (Solo se activa al registrar pago).
-                    else if (isForPayment && pendingPayments.length === 0 && client.balance > 0 && daysSinceLastCut < 6) {
+                    else if (isForPayment && pendingPayments.length === 0 && client.balance > 0 && !showProjectedInterest) {
                         // upToDate es la fecha del pago, no "hoy".
                         if(upToDate > lastTransactionDate) {
                             let interestForPeriod = client.balance * (client.interestRate / 100);
